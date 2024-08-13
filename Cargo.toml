@@ -13,6 +13,8 @@ drivechain = { git = "https://github.com/nchashch/drivechain", rev = "db1c2e39d5
 thiserror = "1.0.31"
 hex = "0.4.3"
 miette = { version = "5.10.0", features = ["fancy"] }
+log = "0.4"
+simplelog = "0.11"
 
 [build-dependencies]
 cxx-build = "1.0"

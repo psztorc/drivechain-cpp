@@ -3,6 +3,9 @@ use drivechain as drive;
 use miette::{IntoDiagnostic as _, Result};
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::fs::File;
+use simplelog::*;
+use log::{info, error, debug};
 
 // FIXME: Figure out how to pass std::vector<unsigned char> directly, without
 // hex encoding.
@@ -191,20 +194,38 @@ impl Drivechain {
     ) -> Result<bool> {
         let deposits: Vec<drive::Deposit> = deposits
             .iter()
-            .map(|output| drive::Deposit {
-                address: output.address.clone(),
-                amount: output.amount,
+            .map(|output| {
+                info!("Processing deposit with address: {} and amount: {}", output.address, output.amount);
+                drive::Deposit {
+                    address: output.address.clone(),
+                    amount: output.amount,
+                }
             })
             .collect();
+
+        CombinedLogger::init(
+                vec![
+                    WriteLogger::new(LevelFilter::Info, Config::default(), File::create("drivechain.log")?),
+                ]
+            ).unwrap();
 
         let withdrawals: Result<HashMap<Vec<u8>, drive::Withdrawal>> = withdrawals
             .into_iter()
             .map(|w| {
+                info!("Processing withdrawal with outpoint: {} and amount: {}", w.outpoint, w.amount);
                 let mut dest: [u8; 20] = Default::default();
-                dest.copy_from_slice(hex::decode(w.main_address).into_diagnostic()?.as_slice());
+                match hex::decode(&w.main_address) {
+                    Ok(decoded) => {
+                        dest.copy_from_slice(&decoded);
+                    }
+                    Err(e) => {
+                        error!("Failed to decode main_address: {}. Error: {:?}", w.main_address, e);
+                        return Err(e.into());
+                    }
+                }
                 let mainchain_fee = w.main_fee;
                 Ok((
-                    hex::decode(w.outpoint).into_diagnostic()?,
+                    hex::decode(&w.outpoint).into_diagnostic()?,
                     drive::Withdrawal {
                         amount: w.amount,
                         dest,
@@ -219,16 +240,24 @@ impl Drivechain {
         let refunds: Result<HashMap<Vec<u8>, u64>> = refunds
             .iter()
             .map(|r| {
+                info!("Processing refund with outpoint: {} and amount: {}", r.outpoint, r.amount);
                 Ok((
                     hex::decode(&r.outpoint).into_diagnostic()?.to_vec(),
                     r.amount,
                 ))
             })
             .collect();
-        Ok(self
-            .0
-            .connect_block(deposits.as_slice(), &withdrawals?, &refunds?, just_check)
-            .is_ok())
+
+        info!("Connecting block with {} deposits, {} withdrawals, and {} refunds.", 
+            deposits.len(), withdrawals.as_ref().map_or(0, |m| m.len()), refunds.as_ref().map_or(0, |m| m.len()));
+
+        let result = self.0.connect_block(deposits.as_slice(), &withdrawals?, &refunds?, just_check);
+        if result.is_ok() {
+            info!("Block connected successfully.");
+        } else {
+            error!("Block connection failed.");
+        }
+        Ok(result.is_ok())
     }
 
     fn disconnect_block(
